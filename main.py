@@ -93,8 +93,12 @@ PLAYER_BASE_MOVEMENT_SPEED = 3
 num_episodes = 10000
 close_game = False
 
+# Global environment state variable
+state = np.zeros(shape=(2, 2))
 
-def get_state():
+
+
+def collect_state():
     # Test object recognition by getting data from screen
     obj_recognition = o_r.ObjectRecognition(yolo_model, (0, 40, 640, 480), True, 0.2)
     result = obj_recognition.get_screen_data()
@@ -105,6 +109,11 @@ def get_state():
     curr_state = boss_environment.get_state()
     return curr_state
 
+# def state_getter():
+#     while True:
+#         env_state = collect_state()
+#         time.sleep(.15)
+
 
 def reset_game():
     return False
@@ -112,8 +121,9 @@ def reset_game():
 
 yolo_model = YOLO(yolo_weights_filepath)
 boss_environment = BossEnvironment()
-state_getter_thread = Thread(target=get_state, args=[])
+state_getter_thread = Thread(target=collect_state, args=[])
 state_getter_thread.start()
+state_getter_thread.run()
 
 # Main program loop, iterates through the episodes
 # - Game is reset at the beginning of each iteration
@@ -121,50 +131,16 @@ for episode in range(0, (num_episodes - episode_count)):
     pygame.init()
 
     predicted_y = 0
-    just_bounced = False
     frame_count_episode = 0
-    state = np.zeros(shape=(350, 250))
+    state = np.zeros(shape=(2, 2))
     episode_reward = 0
-    playerA_times_paddled = 0
 
-    # Open a new window
-    size = (350, 250)
-    screen = pygame.display.set_mode(size)
-    pygame.display.set_caption("PongDQL")
-
-    # paddleA is the "player", aka the human player in Pong
-    # rather than being a human player, it is controlled by the DQL model
-    paddleA = Paddle(WHITE, 5, 50)
-    paddleA.rect.x = 5
-    paddleA.rect.y = 100
-
-    # paddleB is the "computer", aka the traditional opponent in Pong
-    paddleB = Paddle(WHITE, 5, 50)
-    paddleB.rect.x = 340
-    paddleB.rect.y = 100
-
-    # ball is the ball, which bounces around
-    ball = Ball(WHITE, 5, 5, SPEED_FACTOR)
-    ball.rect.x = 172
-    ball.rect.y = 97
-
-    # This will be a list that will contain all the sprites we intend to use in our game.
-    all_sprites_list = pygame.sprite.Group()
-
-    # Add the paddles and ball to the list of sprites
-    all_sprites_list.add(paddleA)
-    all_sprites_list.add(paddleB)
-    all_sprites_list.add(ball)
+    # Value True is player facing right
+    # Value False is player facing left
+    direction_facing = True
 
     # The loop will carry on until the user exits the game (e.g. clicks the close button).
     keep_playing = True
-
-    # The clock will be used to control how fast the screen updates
-    clock = pygame.time.Clock()
-
-    # Initialise player scores
-    scoreA = 0
-    scoreB = 0
 
     # -------- Main Game Loop -----------
     while keep_playing:
@@ -186,19 +162,6 @@ for episode in range(0, (num_episodes - episode_count)):
                 elif event.key == pygame.K_k:
                     keep_playing = reset_game()
 
-        # Make sure the paddle is heading towards where it thinks the ball will be
-        paddleB.head_to_y(predicted_y, SPEED_FACTOR * PLAYER_BASE_MOVEMENT_SPEED)
-
-        # --- Update sprites
-        all_sprites_list.update()
-
-        # --- Drawing code should go here
-        # First, clear the screen to black.
-        screen.fill(BLACK)
-        # Draw the net and bottom/top lines
-        pygame.draw.line(screen, WHITE, [174, 0], [174, 250], 2)
-        pygame.draw.line(screen, WHITE, [0, 0], [350, 0], 2)
-        pygame.draw.line(screen, WHITE, [0, 248], [350, 248], 2)
 
 # --- BEGIN DEEP Q LEARNER SECTION
 
@@ -219,71 +182,11 @@ for episode in range(0, (num_episodes - episode_count)):
         epsilon -= epsilon_interval / epsilon_greedy_frames
         epsilon = max(epsilon, epsilon_min)
 
-        # Move the player's paddle based on the chosen best/random action
-        keys = pygame.key.get_pressed()
-        if action == 0:
-            paddleA.move_up(SPEED_FACTOR * PLAYER_BASE_MOVEMENT_SPEED)
-        elif action == 1:
-            paddleA.move_down(SPEED_FACTOR * PLAYER_BASE_MOVEMENT_SPEED)
-        else:
-            # action = 3
-            paddleA.stay_here()
-
-        # do the intelligent movement
-        # ball is heading towards paddleB
-        if just_bounced:
-            if ball.velocity[0] > 0:
-                predicted_y = naive_AI.predict_y(ball.velocity, ball.rect)
-            just_bounced = False
-
-        # Check if the ball is in one of the endzones
-        # If it is, increment score, issue some award to DQL,
-        # send the ball home, and predict y for naive AI
-        if ball.rect.x >= 345:
-            scoreA += 1
-            reward += .5
-            ball.go_home()
-            predicted_y = naive_AI.predict_y(ball.velocity, ball.rect)
-            just_bounced = True
-        if ball.rect.x <= 2:
-            scoreB += 1
-            reward -= .25
-            ball.go_home()
-            predicted_y = naive_AI.predict_y(ball.velocity, ball.rect)
-            just_bounced = True
-
-        # Check if the ball is bouncing off either wall
-        if ball.rect.y >= 245:
-            ball.bounce_off_wall()
-            just_bounced = True
-        if ball.rect.y <= 0:
-            ball.bounce_off_wall()
-            just_bounced = True
-
         # assess and issue a reward based on how close the ball is to the paddle
-        player_dist_to_ball = abs(paddleA.rect.y - ball.rect.y + 23) + .1
-        dist_reward = min(2, (4 * pow(player_dist_to_ball, -1)))
-        reward += dist_reward
-
-        # Detect collisions between the ball and the paddles
-        if pygame.sprite.collide_mask(ball, paddleA) or pygame.sprite.collide_mask(ball, paddleB):
-            # Every time the player paddle bounces the ball, give it a pat on the back
-            if pygame.sprite.collide_mask(ball, paddleA):
-                ball.bounce_off_paddle(True)
-                playerA_times_paddled += 1
-                reward += .75
-            else:
-                # ball bounced off the opponent (right side) paddle
-                ball.bounce_off_paddle(False)
-            just_bounced = True
-
-# --- THIS IS WHERE THE GAME SCREEN ARRAY IS TAKEN
+        reward = boss_environment.reward()
 
         # references the array of pixels on the screen (faster)
         state_next = pygame.surfarray.pixels3d(pygame.display.get_surface())
-
-        # copies the array of pixels on the screen
-        # state_next = pygame.surfarray.array2d(pygame.display.get_surface())
 
         state_next = rgb2gray(state_next)
         # state_next = resize(state_next, (175, 125))
