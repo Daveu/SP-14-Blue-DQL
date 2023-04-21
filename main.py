@@ -13,6 +13,7 @@ from BossEnvironment import BossEnvironment
 from ultralytics import YOLO
 import object_recognition as o_r
 from threading import Thread
+import pyautogui
 
 
 # Configuration parameters for the whole setup
@@ -85,7 +86,10 @@ GRAY = (200, 200, 200)
 # Speed to multiply all movements by
 SPEED_FACTOR = 1
 # Maximum number of allowed frames per second
-FRAME_RATE = 120
+FRAME_RATE = 5
+# How long the current frame has taken
+current_frame_time = 0
+
 # How many pixels per frame the player can move
 PLAYER_BASE_MOVEMENT_SPEED = 3
 
@@ -95,7 +99,8 @@ close_game = False
 
 # Global environment state variable
 state = np.zeros(shape=(2, 2))
-
+#
+# action_flags = np.zeros(DQLearner.num_actions)
 
 
 def collect_state():
@@ -115,15 +120,22 @@ def collect_state():
 #         time.sleep(.15)
 
 
+def print_episode_results():
+    # Give summary at the end of each episode
+    print(f'Episode {episode_count} is over.')
+    print(f'Learner got {reward} points on this episode.')
+
+
 def reset_game():
     return False
 
 
 yolo_model = YOLO(yolo_weights_filepath)
 boss_environment = BossEnvironment()
-state_getter_thread = Thread(target=collect_state, args=[])
-state_getter_thread.start()
-state_getter_thread.run()
+printer_thread = Thread(target=print_episode_results, args=[])
+printer_thread.start()
+model_saver_thread = Thread(target=model_file_manager.store_model_data(model, model_target))
+model_saver_thread.start()
 
 # Main program loop, iterates through the episodes
 # - Game is reset at the beginning of each iteration
@@ -148,19 +160,25 @@ for episode in range(0, (num_episodes - episode_count)):
         frame_count += 1
         frame_count_episode += 1
         reward = 0
+        current_frame_time = 0
+        temp_time = time.time()
 
+        pyautogui.keyDown('x')
+
+
+        # TODO: Add a way to safely exit the learner program
         # --- Main event loop
-        for event in pygame.event.get():  # User did something
-            if event.type == pygame.QUIT:  # If user clicked close
-                keep_playing = False  # Flag that we are done so we exit this loop
-                close_game = True
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_x:  # Pressing the x Key will quit the game
-                    keep_playing = False
-                    close_game = True
-                # pressing the k key ends the current episode (if the ball gets stuck or whatever)
-                elif event.key == pygame.K_k:
-                    keep_playing = reset_game()
+        # for event in pygame.event.get():  # User did something
+        #     if event.type == pygame.QUIT:  # If user clicked close
+        #         keep_playing = False  # Flag that we are done so we exit this loop
+        #         close_game = True
+        #     elif event.type == pygame.KEYDOWN:
+        #         if event.key == pygame.K_x:  # Pressing the x Key will quit the game
+        #             keep_playing = False
+        #             close_game = True
+        #         # pressing the k key ends the current episode (if the ball gets stuck or whatever)
+        #         elif event.key == pygame.K_k:
+        #             keep_playing = reset_game()
 
 
 # --- BEGIN DEEP Q LEARNER SECTION
@@ -182,19 +200,31 @@ for episode in range(0, (num_episodes - episode_count)):
         epsilon -= epsilon_interval / epsilon_greedy_frames
         epsilon = max(epsilon, epsilon_min)
 
+        # action_flags[action] = 1
+
+        pyautogui.keyUp('left')
+        pyautogui.keyUp('right')
+        # pyautogui.keyUp('z')
+        pyautogui.keyUp('down')
+
+        if action == 0:
+            pyautogui.keyDown('left')
+        if action == 1:
+            pyautogui.keyDown('right')
+        if action == 2:
+            pyautogui.press('z')
+        if action == 3:
+            pyautogui.keyDown('down')
+        if action == 4:
+            pyautogui.keyDown('left')
+            pyautogui.press('z')
+        if action == 5:
+            pyautogui.keyDown('right')
+            pyautogui.press('z')
+        # if action is 6, agent does nothing
+
         # assess and issue a reward based on how close the ball is to the paddle
         reward = boss_environment.reward()
-
-        # references the array of pixels on the screen (faster)
-        state_next = pygame.surfarray.pixels3d(pygame.display.get_surface())
-
-        state_next = rgb2gray(state_next)
-        # state_next = resize(state_next, (175, 125))
-
-        # if either player has a score of 6 or more, reset the game
-        if scoreA >= 6 or scoreB >= 6 or frame_count_episode >= 10000:
-            reward = 2 * scoreA - scoreB
-            keep_playing = reset_game()
 
         # add current value of reward to sum of episode's reward
         episode_reward += reward
@@ -267,21 +297,12 @@ for episode in range(0, (num_episodes - episode_count)):
 
 # --- END DEEP Q LEARNER SECTION
 
-        # Draw the paddleA, paddleB, and ball
-        all_sprites_list.draw(screen)
+        current_frame_time = time.time() - temp_time
 
-        # Display scores:
-        font = pygame.font.Font(None, 32)
-        text = font.render(str(scoreA), 1, GRAY)
-        screen.blit(text, (125, 5))
-        text = font.render(str(scoreB), 1, GRAY)
-        screen.blit(text, (210, 5))
-
-        # --- Update the screen
-        pygame.display.flip()
+        time.sleep(1/FRAME_RATE - current_frame_time/1000)
 
         # --- Limit to value defined by FRAME_RATE (ex 60 or 120)
-        clock.tick(FRAME_RATE)
+        # clock.tick(FRAME_RATE)
     # End game loop
 
     # Update running reward to check condition for solving
@@ -290,38 +311,30 @@ for episode in range(0, (num_episodes - episode_count)):
         del episode_reward_history[:1]
     running_reward = np.mean(episode_reward_history)
 
-    # Give summary at the end of each episode
-    print(f'Episode {episode_count} is over.')
-    print(f'Final Score was {scoreA} - {scoreB}')
-    print(f'Learner hit the ball {playerA_times_paddled} times.')
+    printer_thread.run()
+
+
+    if close_game:
+        if SAVE_LEARNER:
+            model_saver_thread.run()
+            # store episode_count-1
+        break
 
     episode_count += 1
 
-    # Save the model every 100th episode
-    if episode_count % 100 == 0 and SAVE_LEARNER:
-        model.save(model_filepath, save_format="h5", )
-        model_target.save(model_target_filepath, save_format="h5")
-        model_file_manager.store_all(epsilon, episode_count, frame_count)
+    # Save the model every episode
+    if episode_count % 1 == 0 and SAVE_LEARNER:
+        model_saver_thread.run()
 
     # Condition to consider the task solved
     # Save model states
     if running_reward > 1000:
         print("Solved at episode {}!".format(episode_count))
         if SAVE_LEARNER:
-            model.save(model_filepath, save_format="h5",)
-            model_target.save(model_target_filepath, save_format="h5")
-            model_file_manager.store_all(epsilon, episode_count, frame_count)
+            model_saver_thread.run()
         break
 
     # If the user closes window or hits x key
     # Save model states
-    if close_game:
-        if SAVE_LEARNER:
-            model.save(model_filepath, save_format="h5")
-            model_target.save(model_target_filepath, save_format="h5")
-            model_file_manager.store_all(epsilon, episode_count-1, frame_count)
-        break
+    pyautogui.keyUp('x')
 # End main loop
-
-# Once we have exited the main program loop we can stop the game engine:
-pygame.quit()

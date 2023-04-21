@@ -2,8 +2,11 @@ from keras import layers
 import keras
 import tensorflow as tf
 
-
-num_actions = 3
+# left right jump duck do-nothing
+num_actions = 7
+# NOTE: dashing is an option on all of the actions as well [shift] it's an action
+# 5 seconds from retry to being able to move
+# when it wins, hit enter, move up by a quarter second or so, then hit enter then enter again
 optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=0.00025, clipnorm=1.0)
 
 # Using huber loss for stability
