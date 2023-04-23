@@ -1,13 +1,20 @@
 import numpy as np
 import object_recognition as o_r
+from threading import Thread
 
 
 class BossEnvironment:
+    def print_state_data(self):
+        print("player pos:", self.player_position)
+        print("boss pos:", self.boss_position)
+
     def __init__(self):
         self.player_label = 1
         self.boss_label = 2
         self.player_position = None
         self.boss_position = None
+        self.printer_thread = Thread(target=self.print_state_data, args=[])
+        self.printer_thread.start()
 
     def reset(self):
         self.player_position = None
@@ -46,12 +53,11 @@ class BossEnvironment:
             # Player and boss haven't collided, player is alive so reward the agent
             return 1
 
+
     def get_state(self):
-
-        print("player pos:", self.player_position)
-        print("boss pos:", self.boss_position)
-
-        if self.player_position is None or self.boss_position is None or len(self.player_position) == 0 or len(self.boss_position) == 0:
+        self.printer_thread.run()
+        if self.player_position is None or self.boss_position is None or len(self.player_position) == 0 or len(
+                self.boss_position) == 0:
             print('null or empty game data')
             return None
         # Return state in a numpy array

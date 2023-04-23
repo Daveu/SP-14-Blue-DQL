@@ -1,19 +1,18 @@
 # Import the pygame library and initialise the game engine
-import os
 import os.path
+import time
 
 import model_file_manager
 
-import naive_AI
 import DQLearner
 import numpy as np
 import tensorflow as tf
-import random
 from BossEnvironment import BossEnvironment
 from ultralytics import YOLO
 import object_recognition as o_r
 from threading import Thread
 import pyautogui
+from tensorflow.python import keras
 
 
 # Configuration parameters for the whole setup
@@ -34,7 +33,7 @@ yolo_weights_filepath = os.path.join("weights", "best.pt")
 # Save the learner whenever the game is exited
 SAVE_LEARNER = True
 # Start model fresh with all new parameters DEFAULT = FALSE
-RESTART_LEARNING = False
+RESTART_LEARNING = True
 
 if RESTART_LEARNING:
     # Define all new parameters and create new models
@@ -51,8 +50,8 @@ else:
     episode_count = model_file_manager.get_episodes()
     frame_count = model_file_manager.get_frames()
     if os.path.isfile(model_filepath) and os.path.isfile(model_target_filepath):
-        model = tf.keras.models.load_model(model_filepath)
-        model_target = tf.keras.models.load_model(model_target_filepath)
+        model = keras.models.load_model(model_filepath)
+        model_target = keras.models.load_model(model_target_filepath)
     else:
         model = DQLearner.create_q_model()
         model_target = DQLearner.create_q_model()
@@ -79,10 +78,7 @@ max_memory_length = 16000
 update_after_actions = 8
 # How often to update the target network
 update_target_network = 10000
-# Define some colors
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-GRAY = (200, 200, 200)
+
 # Speed to multiply all movements by
 SPEED_FACTOR = 1
 # Maximum number of allowed frames per second
@@ -93,6 +89,7 @@ current_frame_time = 0
 # How many pixels per frame the player can move
 PLAYER_BASE_MOVEMENT_SPEED = 3
 
+reward = 0
 # Arbitrary upper limit on how many episodes can go on
 num_episodes = 10000
 close_game = False
@@ -134,17 +131,16 @@ yolo_model = YOLO(yolo_weights_filepath)
 boss_environment = BossEnvironment()
 printer_thread = Thread(target=print_episode_results, args=[])
 printer_thread.start()
-model_saver_thread = Thread(target=model_file_manager.store_model_data(model, model_target))
+model_saver_thread = Thread(target=model_file_manager.store_model_data, args=[model, model_target, epsilon, episode_count, frame_count])
 model_saver_thread.start()
 
 # Main program loop, iterates through the episodes
 # - Game is reset at the beginning of each iteration
 for episode in range(0, (num_episodes - episode_count)):
-    pygame.init()
-
     predicted_y = 0
     frame_count_episode = 0
     state = np.zeros(shape=(2, 2))
+    state_next = np.zeros(shape=(2, 2))
     episode_reward = 0
 
     # Value True is player facing right
@@ -223,6 +219,8 @@ for episode in range(0, (num_episodes - episode_count)):
             pyautogui.press('z')
         # if action is 6, agent does nothing
 
+        state_next = collect_state()
+
         # assess and issue a reward based on how close the ball is to the paddle
         reward = boss_environment.reward()
 
@@ -240,45 +238,43 @@ for episode in range(0, (num_episodes - episode_count)):
         # Update every fourth frame and once batch size is over 32
         # if frame_count_episode % update_after_actions == 0 and len(done_history) > batch_size:
 
-        # Only update on impact with a paddle or wall
-        if just_bounced and len(done_history) > batch_size:
-            # Get indices of samples for replay buffers
-            indices = np.random.choice(range(len(done_history)), size=batch_size)
+        # Get indices of samples for replay buffers
+        indices = np.random.choice(range(len(done_history)), size=batch_size)
 
-            # Using list comprehension to sample from replay buffer
-            state_sample = np.array([state_history[i] for i in indices])
-            state_next_sample = np.array([state_next_history[i] for i in indices])
-            rewards_sample = [rewards_history[i] for i in indices]
-            action_sample = [action_history[i] for i in indices]
-            done_sample = tf.convert_to_tensor(
-                [float(done_history[i]) for i in indices]
-            )
+        # Using list comprehension to sample from replay buffer
+        state_sample = np.array([state_history[i] for i in indices])
+        state_next_sample = np.array([state_next_history[i] for i in indices])
+        rewards_sample = [rewards_history[i] for i in indices]
+        action_sample = [action_history[i] for i in indices]
+        done_sample = tf.convert_to_tensor(
+            [float(done_history[i]) for i in indices]
+        )
 
-            # Build the updated Q-values for the sampled future states
-            # Use the target model for stability
-            future_rewards = model_target.predict(state_next_sample, verbose=0)
-            # Q value = reward + discount factor * expected future reward
-            updated_q_values = rewards_sample + gamma * tf.reduce_max(
-                future_rewards, axis=1
-            )
+        # Build the updated Q-values for the sampled future states
+        # Use the target model for stability
+        future_rewards = model_target.predict(state_next_sample, verbose=0)
+        # Q value = reward + discount factor * expected future reward
+        updated_q_values = rewards_sample + gamma * tf.reduce_max(
+            future_rewards, axis=1
+        )
 
-            # If final frame set the last value to -1
-            updated_q_values = updated_q_values * (1 - done_sample) - done_sample
+        # If final frame set the last value to -1
+        updated_q_values = updated_q_values * (1 - done_sample) - done_sample
 
-            # Create a mask so we only calculate loss on the updated Q-values
-            masks = tf.one_hot(action_sample, DQLearner.num_actions)
+        # Create a mask so we only calculate loss on the updated Q-values
+        masks = tf.one_hot(action_sample, DQLearner.num_actions)
 
-            with tf.GradientTape() as tape:
-                # Train the model on the states and updated Q-values
-                q_values = model(state_sample)
-                # Apply the masks to the Q-values to get the Q-value for action taken
-                q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
-                # Calculate loss between new Q-value and old Q-value
-                loss = DQLearner.loss_function(updated_q_values, q_action)
+        with tf.GradientTape() as tape:
+            # Train the model on the states and updated Q-values
+            q_values = model(state_sample)
+            # Apply the masks to the Q-values to get the Q-value for action taken
+            q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
+            # Calculate loss between new Q-value and old Q-value
+            loss = DQLearner.loss_function(updated_q_values, q_action)
 
-            # Backpropagation
-            grads = tape.gradient(loss, model.trainable_variables)
-            DQLearner.optimizer.apply_gradients(zip(grads, model.trainable_variables))
+        # Backpropagation
+        grads = tape.gradient(loss, model.trainable_variables)
+        DQLearner.optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
         if frame_count % update_target_network == 0:
             # update the target network with new weights

@@ -18,9 +18,9 @@ def create_q_model():
     inputs = layers.Input(shape=(2, 2, 1,))
 
     # Convolutions on the frames on the screen
-    layer1 = layers.Conv2D(32, kernel_size=5, strides=4, activation="relu")(inputs)
+    layer1 = layers.Conv2D(32, kernel_size=5, padding='same', strides=1, activation="relu")(inputs)
 
-    layer2 = layers.Conv2D(64, kernel_size=5, strides=2, activation="relu")(layer1)
+    layer2 = layers.Conv2D(64, kernel_size=5, padding='same', strides=1, activation="relu")(layer1)
 
     layer3 = layers.MaxPooling2D(pool_size=(2, 2))(layer2)
 

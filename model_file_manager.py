@@ -121,7 +121,7 @@ def store_all(new_epsilon, new_episodes, new_frames):
     store_frames(new_frames)
 
 
-def store_model_data(model, model_target):
+def store_model_data(model, model_target, epsilon, episode_count, frame_count):
     model.save(model_filepath, save_format="h5", )
     model_target.save(model_target_filepath, save_format="h5")
     store_all(epsilon, episode_count, frame_count)
