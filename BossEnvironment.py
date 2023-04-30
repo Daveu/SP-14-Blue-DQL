@@ -47,7 +47,6 @@ class BossEnvironment:
         if self.player_position is None or self.boss_position is None:
             # No data from state, neutral reward
             return 0
-
         if o_r.get_overlaps([self.player_position, self.boss_position]):
             # Player and boss have collided, provide negative reward
             return -1

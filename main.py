@@ -241,7 +241,6 @@ for episode in range(0, (num_episodes - episode_count)):
             state_next = state_tmp
             # state[1] = state_next[0]
 
-
         # assess and issue a reward based on how close the ball is to the paddle
         reward = boss_environment.reward()
 
