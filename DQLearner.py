@@ -1,4 +1,7 @@
+import keras
 from keras import layers
+from keras import optimizers
+from keras import losses
 import keras
 import tensorflow as tf
 
@@ -7,26 +10,29 @@ num_actions = 7
 # NOTE: dashing is an option on all of the actions as well [shift] it's an action
 # 5 seconds from retry to being able to move
 # when it wins, hit enter, move up by a quarter second or so, then hit enter then enter again
-optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=0.00025, clipnorm=1.0)
+optimizer = optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
 
 # Using huber loss for stability
-loss_function = tf.keras.losses.Huber()
+loss_function = losses.Huber()
 
 
 def create_q_model():
     # Network defined by the Deepmind paper
-    inputs = layers.Input(shape=(2, 2, 1,))
+    inputs = layers.Input(shape=(2, 4))
+    flatten_input = layers.Flatten()(inputs)
+    layer1 = layers.Dense(32, activation="relu")(flatten_input)
+    layer2 = layers.Dense(64, activation="tanh")(layer1)
 
     # Convolutions on the frames on the screen
-    layer1 = layers.Conv2D(32, kernel_size=5, padding='same', strides=1, activation="relu")(inputs)
+    #layer1 = layers.Conv2D(32, kernel_size=2, padding='same', strides=1, activation="relu")(inputs)
 
-    layer2 = layers.Conv2D(64, kernel_size=5, padding='same', strides=1, activation="relu")(layer1)
+    #layer2 = layers.Conv2D(64, kernel_size=2, padding='same', strides=1, activation="relu")(layer1)
 
-    layer3 = layers.MaxPooling2D(pool_size=(2, 2))(layer2)
+    # layer3 = layers.MaxPooling2D(pool_size=(2, 2))(layer2)
 
-    layer4 = layers.Flatten()(layer3)
-
-    layer5 = layers.Dense(512, activation="relu")(layer4)
+    #layer4 = layers.Flatten()(layer2)
+    dropout_layer = layers.Dropout(0.2)(layer2)
+    layer5 = layers.Dense(512, activation="relu")(dropout_layer)
     action = layers.Dense(num_actions, activation="linear")(layer5)
 
     return keras.Model(inputs=inputs, outputs=action)

@@ -1,4 +1,7 @@
-# Import the pygame library and initialise the game engine
+
+# TODO: F5 to load debug menu when on map
+# TODO: type "scene.select"
+# TODO: scene menu comes up; click "slime"
 import os.path
 import time
 
@@ -12,9 +15,9 @@ from ultralytics import YOLO
 import object_recognition as o_r
 from threading import Thread
 import pyautogui
-from tensorflow.python import keras
+# from tensorflow.python import keras
 
-
+DEBUG_MODE = False
 # Configuration parameters for the whole setup
 seed = 42
 gamma = 0.99  # Discount factor for past rewards
@@ -33,7 +36,7 @@ yolo_weights_filepath = os.path.join("weights", "best.pt")
 # Save the learner whenever the game is exited
 SAVE_LEARNER = True
 # Start model fresh with all new parameters DEFAULT = FALSE
-RESTART_LEARNING = True
+RESTART_LEARNING = False
 
 if RESTART_LEARNING:
     # Define all new parameters and create new models
@@ -50,8 +53,8 @@ else:
     episode_count = model_file_manager.get_episodes()
     frame_count = model_file_manager.get_frames()
     if os.path.isfile(model_filepath) and os.path.isfile(model_target_filepath):
-        model = keras.models.load_model(model_filepath)
-        model_target = keras.models.load_model(model_target_filepath)
+        model = tf.keras.models.load_model(model_filepath)
+        model_target = tf.keras.models.load_model(model_target_filepath)
     else:
         model = DQLearner.create_q_model()
         model_target = DQLearner.create_q_model()
@@ -82,7 +85,7 @@ update_target_network = 10000
 # Speed to multiply all movements by
 SPEED_FACTOR = 1
 # Maximum number of allowed frames per second
-FRAME_RATE = 5
+FRAME_RATE = 30
 # How long the current frame has taken
 current_frame_time = 0
 
@@ -102,13 +105,13 @@ state = np.zeros(shape=(2, 2))
 
 def collect_state():
     # Test object recognition by getting data from screen
-    obj_recognition = o_r.ObjectRecognition(yolo_model, (0, 40, 640, 480), True, 0.2)
     result = obj_recognition.get_screen_data()
-    print(result)
-
+    if DEBUG_MODE:
+        print(result)
     # Test state building using environment class
     boss_environment.observe(result)
     curr_state = boss_environment.get_state()
+    # print(f"curr_state shape is: {curr_state.shape}")
     return curr_state
 
 # def state_getter():
@@ -128,19 +131,24 @@ def reset_game():
 
 
 yolo_model = YOLO(yolo_weights_filepath)
+obj_recognition = o_r.ObjectRecognition(yolo_model, (0, 40, 640, 480), True, 0.2)
 boss_environment = BossEnvironment()
-printer_thread = Thread(target=print_episode_results, args=[])
+boss_environment.__init__()
+printer_thread = Thread(target=print_episode_results, args=())
 printer_thread.start()
-model_saver_thread = Thread(target=model_file_manager.store_model_data, args=[model, model_target, epsilon, episode_count, frame_count])
+model_saver_thread = Thread(target=model_file_manager.store_model_data, args=(model, model_target, epsilon,
+                                                                              episode_count, frame_count))
 model_saver_thread.start()
+
+time.sleep(5)
 
 # Main program loop, iterates through the episodes
 # - Game is reset at the beginning of each iteration
 for episode in range(0, (num_episodes - episode_count)):
     predicted_y = 0
     frame_count_episode = 0
-    state = np.zeros(shape=(2, 2))
-    state_next = np.zeros(shape=(2, 2))
+    state = np.zeros(shape=(2, 4))
+    state_next = np.zeros(shape=(2, 4))
     episode_reward = 0
 
     # Value True is player facing right
@@ -209,8 +217,8 @@ for episode in range(0, (num_episodes - episode_count)):
             pyautogui.keyDown('right')
         if action == 2:
             pyautogui.press('z')
-        if action == 3:
-            pyautogui.keyDown('down')
+        # if action == 3:
+        #     pyautogui.keyDown('down')
         if action == 4:
             pyautogui.keyDown('left')
             pyautogui.press('z')
@@ -220,6 +228,19 @@ for episode in range(0, (num_episodes - episode_count)):
         # if action is 6, agent does nothing
 
         state_next = collect_state()
+        # for any reason, player or boss aren't detected
+        if state_next is None:
+            for i in range(0, 10):
+                pyautogui.press('enter')
+                time.sleep(.4)
+            break
+
+        if state_next.shape[0] == 1:
+            state_tmp = np.zeros(shape=(2, 4))
+            state_tmp[1] = state_next[0]
+            state_next = state_tmp
+            # state[1] = state_next[0]
+
 
         # assess and issue a reward based on how close the ball is to the paddle
         reward = boss_environment.reward()
@@ -230,10 +251,12 @@ for episode in range(0, (num_episodes - episode_count)):
         # Save actions and states in replay buffer
         action_history.append(action)
         state_history.append(state)
-        state_next_history.append(state_next)
+        if state_next is not None:
+            state_next_history.append(state_next)
         done_history.append(keep_playing)
         rewards_history.append(reward)
-        state = state_next
+        if state_next is not None:
+            state = state_next
 
         # Update every fourth frame and once batch size is over 32
         # if frame_count_episode % update_after_actions == 0 and len(done_history) > batch_size:
@@ -252,7 +275,10 @@ for episode in range(0, (num_episodes - episode_count)):
 
         # Build the updated Q-values for the sampled future states
         # Use the target model for stability
-        future_rewards = model_target.predict(state_next_sample, verbose=0)
+        if state_next_sample.shape[0] >= 32:
+            future_rewards = model_target.predict(state_next_sample, verbose=0)
+        else:
+            future_rewards = np.zeros(32)
         # Q value = reward + discount factor * expected future reward
         updated_q_values = rewards_sample + gamma * tf.reduce_max(
             future_rewards, axis=1
@@ -302,17 +328,20 @@ for episode in range(0, (num_episodes - episode_count)):
     # End game loop
 
     # Update running reward to check condition for solving
+    # episode_reward += frame_count_episode/100
     episode_reward_history.append(episode_reward)
     if len(episode_reward_history) > 100:
         del episode_reward_history[:1]
     running_reward = np.mean(episode_reward_history)
 
-    printer_thread.run()
-
+    print_episode_results()
+    #
+    # printer_thread.run()
 
     if close_game:
         if SAVE_LEARNER:
-            model_saver_thread.run()
+            model_file_manager.store_model_data(model, model_target, epsilon, episode_count, frame_count)
+            # model_saver_thread.run()
             # store episode_count-1
         break
 
@@ -320,14 +349,16 @@ for episode in range(0, (num_episodes - episode_count)):
 
     # Save the model every episode
     if episode_count % 1 == 0 and SAVE_LEARNER:
-        model_saver_thread.run()
+        model_file_manager.store_model_data(model, model_target, epsilon, episode_count, frame_count)
+        # model_saver_thread.run()
 
     # Condition to consider the task solved
     # Save model states
     if running_reward > 1000:
         print("Solved at episode {}!".format(episode_count))
         if SAVE_LEARNER:
-            model_saver_thread.run()
+            model_file_manager.store_model_data(model, model_target, epsilon, episode_count, frame_count)
+            # model_saver_thread.run()
         break
 
     # If the user closes window or hits x key

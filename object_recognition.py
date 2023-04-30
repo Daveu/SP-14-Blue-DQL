@@ -50,6 +50,7 @@ class ObjectRecognition:
         self.model = model
         self.bounding_box = bounding_box
         self.curr_screen = None
+        self.DEBUG_MODE = False
         self.show_results = show_results
         self.conf_threshold = conf_threshold
 
@@ -58,5 +59,6 @@ class ObjectRecognition:
         self.curr_screen = np.array(ImageGrab.grab(bbox=self.bounding_box))
         results = self.model.predict(cv2.cvtColor(self.curr_screen, cv2.COLOR_BGR2RGB), conf=self.conf_threshold,
                                      show=self.show_results)
-        print('Time taken for OR model to get data from screen: ', str(time.time() - last_time))
+        if self.DEBUG_MODE:
+            print('Time taken for OR model to get data from screen: ', str(time.time() - last_time))
         return results[0].boxes.boxes
